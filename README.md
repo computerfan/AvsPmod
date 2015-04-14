@@ -112,8 +112,8 @@ Links
 Development:
 <https://github.com/AvsPmod/AvsPmod>
 
-Windows builds:
-<http://www.amvhell.com/avspmod/>
+Releases:
+<https://github.com/AvsPmod/AvsPmod/releases>
 
 Filter database wiki:
 <https://github.com/AvsPmod/AvsPmod/wiki/Filter-database>
@@ -122,10 +122,10 @@ Discussion:
 <http://forum.doom9.org/showthread.php?t=153248>
 
 AvsP homepage: 
-<http://avisynth.org/qwerpoi/>
+<http://avisynth.nl/users/qwerpoi/>
 
 AviSynth wiki: 
-<http://avisynth.org/mediawiki/Main_Page>
+<http://avisynth.nl/index.php/Main_Page>
 
 AvxSynth wiki: 
 <https://github.com/avxsynth/avxsynth/wiki>

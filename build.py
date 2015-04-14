@@ -1,6 +1,6 @@
 # AvsP - an AviSynth editor
 # 
-# Copyright 2007 Peter Jang <http://www.avisynth.org/qwerpoi>
+# Copyright 2007 Peter Jang <http://avisynth.nl/users/qwerpoi>
 #           2010-2013 the AvsPmod authors <https://github.com/avspmod/avspmod>
 #
 #  This program is free software; you can redistribute it and/or modify
@@ -25,9 +25,9 @@
 #     wxPython (tested on v2.8 Unicode and v2.9)
 #     py2exe (tested on v0.6.9)
 # Additional dependencies for x86-64:
-#     cffi (tested on v0.8.1)
+#     cffi (tested on v0.9.2)
 #     pycparser (tested on v2.10)
-#     Visual Studio 2008 
+#     Visual C++
 #     avisynth_c.h (interface 5, or at least 3 + colorspaces from 5,
 #                   tested with the header used by x264)
 # Optional:

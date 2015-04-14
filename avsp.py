@@ -1,7 +1,7 @@
 # AvsP - an AviSynth editor
 # 
 # Copyright 2007 Peter Jang <http://www.avisynth.org/qwerpoi>
-#           2010-2014 the AvsPmod authors <https://github.com/avspmod/avspmod>
+#           2010-2015 the AvsPmod authors <https://github.com/avspmod/avspmod>
 #
 # Printing support based on stcprint.py from Peppy/Editra (wxWidgets license)
 # Copyright 2007 Cody Precord <staff@editra.org>
@@ -25,9 +25,9 @@
 # Dependencies:
 #     Python (tested on v2.6 and 2.7)
 #     wxPython (tested on v2.8 Unicode and 2.9)
-#     cffi and its dependencies (only for x86-64, tested on v0.8.1)
+#     cffi and its dependencies (only for x86-64, tested on v0.9.2)
 #         pycparser
-#         Visual Studio 2008
+#         Visual C++
 #     avisynth_c.h (only for x86-64, interface 5, or at least 3 + colorspaces 
 #                   from 5, tested with the header used by x264)
 # Scripts:
@@ -2093,6 +2093,7 @@ class AvsStyledTextCtrl(stc.StyledTextCtrl):
         self.endstyled = pos = start
         fragment = []
         hexfragment = []
+        triple_start = None
         # vpy hack, remove when VapourSynth is supported (with a custom Python lexer)
         string_delimiters = ['"', "'"] if self.filename.endswith('.vpy') else '"'
         self.StartStyling(pos, 31)
@@ -2259,6 +2260,8 @@ class AvsStyledTextCtrl(stc.StyledTextCtrl):
                         state = self.STC_AVS_DEFAULT
                         isLoadPlugin = False
             elif state == self.STC_AVS_TRIPLE:
+                if triple_start is None:
+                    triple_start = self.GetStringRange(pos)[0]
                 # AviSynth interprets """"""" as '"' etc.
                 triple_quote_quirk = False
                 if ch == '"' and pos - triple_start == 1:
@@ -2273,6 +2276,7 @@ class AvsStyledTextCtrl(stc.StyledTextCtrl):
                     if isEOD or ((pos - triple_start > 2) and ch in string_delimiters and unichr(self.GetCharAt(pos-1)) in string_delimiters and unichr(self.GetCharAt(pos-2)) in string_delimiters):
                         self.ColourTo(pos, self.STC_AVS_TRIPLE)
                         state = self.STC_AVS_DEFAULT
+                        triple_start = None
                         if isLoadPlugin:
                             if not isEOD:
                                 self.parseDllname(isLoadPlugin, pos)
@@ -5528,11 +5532,17 @@ class MainFrame(wxp.Frame):
         self.lastClosed = None
         if self.options['exitstatus']:
             self.IdleCall.append((wx.MessageBox, (_('A crash detected at the last running!'), _('Warning'), wx.OK|wx.ICON_EXCLAMATION, self), {})) 
-        if self.options['startupsession'] or self.options['exitstatus']:
-            if self.options['alwaysloadstartupsession'] or len(sys.argv) <= 1 or not self.options['promptexitsave'] or self.options['exitstatus']:
-                if os.path.isfile(self.lastSessionFilename) and not self.LoadSession(self.lastSessionFilename, saverecentdir=False, resize=False, backup=True, startup=True):
+        use_last_preview_placement = True
+        if ((self.options['exitstatus'] or self.options['startupsession'] and 
+                (self.options['alwaysloadstartupsession'] or len(sys.argv) <= 1 or not self.options['promptexitsave']))
+            and os.path.isfile(self.lastSessionFilename)):
+                if self.LoadSession(self.lastSessionFilename, saverecentdir=False, resize=False, backup=True, startup=True):
+                    use_last_preview_placement = False
+                else:
                     self.loaderror.append(os.path.basename(self.lastSessionFilename))
                     shutil.copy2(self.lastSessionFilename, os.path.splitext(self.lastSessionFilename)[0] + '.BAD')
+        if use_last_preview_placement and self.options['last_preview_placement'] != self.mainSplitter.GetSplitMode():
+            self.TogglePreviewPlacement()
         if not self.options['exitstatus']:
             self.options['exitstatus'] = 1
             f = open(self.optionsfilename, mode='wb')
@@ -6039,6 +6049,7 @@ class MainFrame(wxp.Frame):
             'hidepreview': False,
             'refreshpreview': True,
             'promptwhenpreview': False,
+            'last_preview_placement': wx.SPLIT_HORIZONTAL,
             'separatevideowindow': False,
             'previewontopofmain': True,
             #~ 'showvideopixelinfo': True,
@@ -7585,6 +7596,9 @@ class MainFrame(wxp.Frame):
                     (''),
                     (_('Set selection startpoint'), 'Home', self.OnMenuVideoTrimEditorSetStartpoint, _('Set a selection startpoint (shows the trim editor if not visible)'), wx.ITEM_NORMAL, None, self.videoWindow),
                     (_('Set selection endpoint'), 'End', self.OnMenuVideoTrimEditorSetEndpoint, _('Set a selection endpoint (shows the trim editor if not visible)'), wx.ITEM_NORMAL, None, self.videoWindow),
+                    (''),
+                    (_('Move selections before the current frame'), 'Ctrl+Alt+V', self.OnMenuVideoMoveSelectionsBeforeCurrentFrame, _('The current selections are cut from the timeline and inserted before the current frame. Bookmarks are shifted accordingly.'), wx.ITEM_NORMAL, None, self.videoWindow),
+                    (_('Move selections after the current frame'), 'Ctrl+V', self.OnMenuVideoMoveSelectionsAfterCurrentFrame, _('The current selections are cut from the timeline and inserted after the current frame. Bookmarks are shifted accordingly.'), wx.ITEM_NORMAL, None, self.videoWindow),
                     ),
                 ),
                 (''),
@@ -8493,20 +8507,8 @@ class MainFrame(wxp.Frame):
                     else:
                         self.videoWindow.SetFocus()
                 title = self.titleEntry.GetLineText(0)
-                if self.currentScript.filename:
-                    if os.path.splitext(title)[1] not in ('.avs', '.avsi', '.vpy'):
-                        title += '.avs'
-                    src = self.currentScript.filename
-                    dirname = os.path.dirname(src)
-                    dst = os.path.join(dirname, title)
-                    try:
-                        os.rename(src, dst)
-                        self.currentScript.filename = dst
-                    except OSError:
-                        wx.Bell()
-                        self.IdleCall.append((self.titleEntry.Destroy, tuple(), {}))
-                        return
-                self.SetScriptTabname(title, index=index)
+                if not self.RenameScript(title):
+                    wx.Bell()
                 self.IdleCall.append((self.titleEntry.Destroy, tuple(), {}))
                 
             def CheckTabPosition():
@@ -9294,7 +9296,17 @@ class MainFrame(wxp.Frame):
 
     def OnMenuVideoTrimEditorSetEndpoint(self, event):
         self.SetSelectionEndPoint(2)
-
+    
+    def OnMenuVideoMoveSelectionsBeforeCurrentFrame(self, event):
+        selections = self.GetSliderSelections(self.invertSelection)
+        if selections:
+            self.MoveFrameRanges(selections, paste_before=True)
+    
+    def OnMenuVideoMoveSelectionsAfterCurrentFrame(self, event):
+        selections = self.GetSliderSelections(self.invertSelection)
+        if selections:
+            self.MoveFrameRanges(selections, paste_before=False)
+    
     def OnMenuVideoZoom(self, event=None, menuItem=None, zoomfactor=None, show=True, scroll=None):
         if zoomfactor is None:
             if True:#wx.VERSION > (2, 8):
@@ -10162,35 +10174,35 @@ class MainFrame(wxp.Frame):
         if os.path.isfile(filename):
             startfile(filename)
         else:
-            startfile('http://www.avisynth.org/qwerpoi/Demo.htm')
+            startfile('http://avisynth.nl/users/qwerpoi/Demo.htm')
 
     def OnMenuHelpTextFeatures(self, event):
         filename = os.path.join(self.helpdir, 'Text.html')
         if os.path.isfile(filename):
             startfile(filename)
         else:
-            startfile('http://avisynth.org/qwerpoi/Text.html')
+            startfile('http://avisynth.nl/users/qwerpoi/Text.html')
 
     def OnMenuHelpVideoFeatures(self, event):
         filename = os.path.join(self.helpdir, 'Video.html')
         if os.path.isfile(filename):
             startfile(filename)
         else:
-            startfile('http://avisynth.org/qwerpoi/Video.html')
+            startfile('http://avisynth.nl/users/qwerpoi/Video.html')
 
     def OnMenuHelpUserSliderFeatures(self, event):
         filename = os.path.join(self.helpdir, 'UserSliders.html')
         if os.path.isfile(filename):
             startfile(filename)
         else:
-            startfile('http://avisynth.org/qwerpoi/UserSliders.html')
+            startfile('http://avisynth.nl/users/qwerpoi/UserSliders.html')
 
     def OnMenuHelpMacroFeatures(self, event):
         filename = os.path.join(self.helpdir, 'Macros.html')
         if os.path.isfile(filename):
             startfile(filename)
         else:
-            startfile('http://avisynth.org/qwerpoi/Macros.html')
+            startfile('http://avisynth.nl/users/qwerpoi/Macros.html')
 
     def OnMenuHelpReadme(self, event):
         readme = os.path.join(self.programdir, 'readme.txt')
@@ -10225,7 +10237,7 @@ class MainFrame(wxp.Frame):
         link.SetFont(font)
         link.SetForegroundColour(wx.Colour(0,0,255))
         link.SetCursor(wx.StockCursor(wx.CURSOR_HAND))
-        url = 'http://www.avisynth.org/qwerpoi/'
+        url = 'http://avisynth.nl/users/qwerpoi/'
         def OnClick(event):
             startfile(url)
         link.SetToolTip(wx.ToolTip(url))
@@ -10624,6 +10636,7 @@ class MainFrame(wxp.Frame):
             self.replaceDialog.SetFocus()
         else:
             script.SetFocus()
+        self.SetVideoStatusText()
         self.UpdateProgramTitle()
         self.oldlinenum = None
 
@@ -11828,6 +11841,7 @@ class MainFrame(wxp.Frame):
                 frame=frame,
                 previewvisible=previewvisible,
             )
+        self.options['last_preview_placement'] = self.mainSplitter.GetSplitMode()
         # Save the text in the scrap window
         scrapCtrl = self.scrapWindow.textCtrl
         self.options['scraptext'] = (scrapCtrl.GetText(), scrapCtrl.GetAnchor(), scrapCtrl.GetCurrentPos())
@@ -12527,6 +12541,34 @@ class MainFrame(wxp.Frame):
                             return s
         return ''
     
+    @AsyncCallWrapper
+    def RenameScript(self, new_title, index=None):
+        """RenameScript(new_title, index=None)
+        
+        Renames the tab located at the integer 'index' to 'new_title'.  If 'index' is 
+        None, then the currently selected tab is used.
+        
+        If the script was saved to the filesystem the file is renamed as well.  Returns 
+        False if the file couldn't be renamed, True otherwise.
+        
+        """
+        if index is None:
+            index = self.scriptNotebook.GetSelection()
+        script = self.scriptNotebook.GetPage(index)
+        if script.filename:
+            if os.path.splitext(new_title)[1] not in ('.avs', '.avsi', '.vpy'):
+                new_title += '.avs'
+            src = script.filename
+            dirname = os.path.dirname(src)
+            dst = os.path.join(dirname, new_title)
+            try:
+                os.rename(src, dst)
+                script.filename = dst
+            except OSError:
+                return False
+        self.SetScriptTabname(new_title, index=index)
+        return True
+    
     def RepositionTab(self, newIndex):
         if type(newIndex) is not int:        
             id = newIndex.GetId()
@@ -12642,10 +12684,9 @@ class MainFrame(wxp.Frame):
             # Select the last selected script
             if selectedIndex is not None:
                 self.scriptNotebook.SetSelection(selectedIndex)
-            # Change preview placement if the session is not empty
-            if not (len(session['scripts']) == 1 and index is not None and not self.scriptNotebook.GetPage(index).GetText()):
-                if session.get('preview_placement', wx.SPLIT_HORIZONTAL) != self.mainSplitter.GetSplitMode():
-                    self.TogglePreviewPlacement()
+            # Change preview placement if needed
+            if session.get('preview_placement', wx.SPLIT_HORIZONTAL) != self.mainSplitter.GetSplitMode():
+                self.TogglePreviewPlacement()
             # Set the video slider to last shown frame number
             if startup:
                 self.previewWindowVisible = previewWindowVisible
@@ -13671,6 +13712,146 @@ class MainFrame(wxp.Frame):
             self.OnMenuVideoTrimEditor(None)
         self.AddFrameBookmark(self.GetFrameNumber(), bmtype)
     
+    def MoveFrameRanges(self, ranges, paste_frame=None, paste_before=False, 
+                        insert_in_script=True):
+        """Cut frames ranges from the timeline and paste them before or after a specified frame
+        
+        'ranges' is a sequence of (start, end) pairs. Return value is 
+        the new timeline in the same format.
+        
+        If 'paste_frame' is not given then the current frame is taken
+        
+        By default the ranges are inserted after 'paste_frame', set 
+        'paste_before' to True to insert them before.
+        
+        By default a line of Trims according to the new timeline is 
+        inserted at the end of the script and bookmarks are shifted, 
+        it can be disabled by setting 'insert_in_script' to False.
+        
+        """
+        script = self.currentScript
+        self.refreshAVI = True
+        if self.UpdateScriptAVI() is None:
+            wx.MessageBox(_('Error loading the script'), _('Error'), 
+                          style=wx.OK|wx.ICON_ERROR)
+            return False
+        
+        # Construct the new timeline
+        cut_ranges = []
+        new_timeline_left = []
+        new_timeline_right = []
+        last_end = -1
+        if paste_frame is None:
+            paste_frame = self.GetFrameNumber()
+        paste_frame_done = False
+        last_frame = script.AVI.Framecount - 1
+        if paste_before:
+            for (start, end) in sorted(ranges):
+                if start - last_end >= 2:
+                    if paste_frame_done:
+                        new_timeline_right.append((last_end + 1, start - 1))
+                    else:
+                        if paste_frame <= end:
+                            if paste_frame >= start:
+                                new_timeline_left.append((last_end + 1, start - 1))
+                            elif last_end + 1 == paste_frame:
+                                new_timeline_right.append((last_end + 1, start - 1))
+                            else:
+                                new_timeline_left.append((last_end + 1, paste_frame - 1))
+                                new_timeline_right.append((paste_frame, start - 1))
+                            paste_frame_done = True
+                        else:
+                            new_timeline_left.append((last_end + 1, start - 1))
+                elif not paste_frame_done and paste_frame <= end:
+                    paste_frame_done = True
+                cut_ranges.append((start, end))
+                last_end = end
+            if not paste_frame_done:
+                new_timeline_left.append((last_end + 1, paste_frame - 1))
+                new_timeline_right.append((paste_frame, last_frame))
+            elif last_end < last_frame:
+                new_timeline_right.append((last_end + 1, last_frame))
+        else:
+            for (start, end) in sorted(ranges):
+                if start - last_end >= 2:
+                    if paste_frame_done:
+                        new_timeline_right.append((last_end + 1, start - 1))
+                    else:
+                        if paste_frame <= end:
+                            if paste_frame >= start - 1:
+                                new_timeline_left.append((last_end + 1, start - 1))
+                            else:
+                                new_timeline_left.append((last_end + 1, paste_frame))
+                                new_timeline_right.append((paste_frame + 1, start - 1))
+                            paste_frame_done = True
+                        else:
+                            new_timeline_left.append((last_end + 1, start - 1))
+                elif not paste_frame_done and paste_frame <= end:
+                    paste_frame_done = True
+                cut_ranges.append((start, end))
+                last_end = end
+            if not paste_frame_done:
+                if paste_frame == last_frame:
+                    new_timeline_left.append((last_end + 1, last_frame))
+                else:
+                    new_timeline_left.append((last_end + 1, paste_frame))
+                    new_timeline_right.append((paste_frame + 1, last_frame))
+            elif last_end < last_frame:
+                new_timeline_right.append((last_end + 1, last_frame))
+        new_timeline = new_timeline_left + cut_ranges + new_timeline_right
+        
+        if not insert_in_script:
+            return new_timeline
+        
+        # Shift bookmarks as needed
+        
+        # Get a dictionary {frame range: bookmarks in that range}
+        range_bm_dict = collections.defaultdict(list)
+        for frame, bmtype in self.GetBookmarkFrameList().iteritems():
+            if bmtype != 0:
+                continue
+            for i, (start, end) in enumerate(new_timeline):
+                if start <= frame <= end:
+                    range_bm_dict[i].append(frame)
+                    break
+        
+        # Get the new bookmark list
+        new_bookmarks = []
+        frame_count = 0
+        new_frame = None
+        for i, (start, end) in enumerate(new_timeline):
+            offset = frame_count - start
+            new_bookmarks.extend([bm + offset for bm in range_bm_dict[i]])
+            frame_count += end - start + 1 
+            if new_frame is None and start <= paste_frame <= end:
+                new_frame = paste_frame + offset
+        
+        # Replace the current bookmarks with the new ones
+        self.DeleteAllFrameBookmarks(bmtype=0)
+        self.MacroSetBookmark(new_bookmarks)
+        
+        # Fix case Trim(0,0)
+        new_timeline2 = new_timeline[:]
+        try: # 'end' parameter is only available in avisynth v2.6+
+            new_timeline2[new_timeline.index((0,0))] = (0, -1)
+        except ValueError:
+            pass
+        
+        # Insert a line of Trims at the end of the script
+        pos = script.GetLength()
+        new_timeline_str = '++'.join(
+                     ['Trim({},{})'.format(*trim) for trim in new_timeline2])
+        script.InsertText(pos, '\n' + new_timeline_str)
+        script.GotoPos(pos + 1 + len(new_timeline_str))
+        
+        # Navigate to the initial frame and hide trim selection editor
+        self.refreshAVI = True
+        self.ShowVideoFrame(new_frame)
+        if self.trimDialog.IsShown():
+            self.OnTrimDialogCancel(None)
+        
+        return new_timeline
+    
     @AsyncCallWrapper
     def GetFrameNumber(self):
         r'''GetFrameNumber()
@@ -14083,10 +14264,6 @@ class MainFrame(wxp.Frame):
             self.Freeze()
             self.scriptNotebook.SetSelection(index)
             self.Thaw()
-        if self.previewWindowVisible:
-            if self.FindFocus() == self.currentScript:
-                self.IdleCall.append((self.SetScriptStatusText, tuple(), {}))
-            self.IdleCall.append((self.OnMouseMotionVideoWindow, tuple(), {}))
         return True
 
     def ShowFunctionDefinitionDialog(self, functionName=None, functionArgs=None):
@@ -14921,6 +15098,7 @@ class MainFrame(wxp.Frame):
             script.autocrop_values = None
             if self.cropDialog.IsShown():
                 self.PaintCropWarnings()
+            self.SetVideoStatusText()
             if self.playing_video == '':
                 self.PlayPauseVideo()
 
@@ -18485,6 +18663,8 @@ class MainFrame(wxp.Frame):
             self.__doc__ += parent.FormatDocstring(self.SaveScriptAs)
             self.IsScriptSaved = parent.MacroIsScriptSaved
             self.__doc__ += parent.FormatDocstring(self.IsScriptSaved)
+            self.RenameScript = parent.RenameScript
+            self.__doc__ += parent.FormatDocstring(self.RenameScript)
             # Video related functions
             self.ShowVideoFrame = parent.MacroShowVideoFrame
             self.__doc__ += parent.FormatDocstring(self.ShowVideoFrame)
